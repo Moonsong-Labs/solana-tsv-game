@@ -1,0 +1,23 @@
+min_version = "2026.9.3"
+
+[tools]
+node = "24.21.0"
+
+# These tasks wrap npm so it runs under the pinned Node, not whatever is on
+# PATH. `mise install` provisions Node itself.
+
+[tasks.deps]
+description = "Install the locked dependencies (pinned Node)"
+run = "npm ci"
+
+[tasks.dev]
+description = "Run the game on http://127.0.0.1:3105"
+run = "npm run dev"
+
+[tasks.check]
+description = "Typecheck and run the tests"
+run = ["npm run typecheck", "npm test"]
+
+[tasks.build]
+description = "Build the static site into out/"
+run = "npm run build"

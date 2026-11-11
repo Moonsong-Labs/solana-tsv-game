@@ -40,3 +40,7 @@ Thumbs.db
 *.swp
 *.swo
 *~
+
+# Next.js: its build cache and the type file it rewrites on every run
+.next/
+next-env.d.ts

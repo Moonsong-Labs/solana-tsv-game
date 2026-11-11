@@ -1,0 +1,26 @@
+:root {
+    --font-display: 'Fredoka Variable', 'Fredoka', ui-rounded, 'Hiragino Maru Gothic ProN', system-ui, sans-serif;
+    --font-body: 'Nunito Variable', 'Nunito', ui-rounded, system-ui, sans-serif;
+    --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+    background: #fdf3df;
+    color: #3b2f2a;
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+
+button {
+    font: inherit;
+    color: inherit;
+}
