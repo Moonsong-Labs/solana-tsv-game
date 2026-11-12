@@ -2,16 +2,28 @@
  * The pool: a pond where stock and dollars swirl together, fed by two
  * vaults. The stock vault starts frozen in ice until the issuer thaws it; a
  * board shows the price, which follows the two reserves.
+ *
+ * The day has one pool, TSA's. Manager mode adds one per stock in the market
+ * quarter: the same pond in that stock's colours, on its own site.
  */
 import * as THREE from 'three';
 
 import { PALETTE, Sculpt, clamp, damp, ease, makeLamp, makeSign } from '../scene/kit.ts';
-import { SITES } from './layout.ts';
+import { STOCKS, type StockId } from '../sim/park.ts';
+import { POOL_SITES } from './layout.ts';
 import { type Place, anchor, makeHitbox } from './place.ts';
+import { stockTones } from './tones.ts';
 
 export type PoolStage = 'none' | 'created' | 'open';
 
+/** What the USDC gauge holds when full at TSA's 12.40 opening price; other pools scale it by their own. */
+const USDC_FULL = 2000;
+/** What the stock gauge holds when full, in shares. */
+const STOCK_FULL = 160;
+
 export interface PoolPlace extends Place {
+    /** The stock this pool trades against USDC. */
+    readonly stock: StockId;
     /** Shows the bare plot, the dry basin with its vaults, or the filled pond. */
     setStage(stage: PoolStage, snap?: boolean): void;
     /** Freezes or thaws the stock vault's ice. */
@@ -93,10 +105,16 @@ function barrel(s: Sculpt, tone: string): void {
     s.box(1.7, 0.16, 1.7, { color: PALETTE.stoneDark, at: [0, -0.02, 0], r: 0.05 });
 }
 
-export function createPool(): PoolPlace {
+export function createPool(opts: { stock?: StockId; site?: readonly [number, number] } = {}): PoolPlace {
+    const stock = opts.stock ?? 'TSA';
+    const site = opts.site ?? POOL_SITES[stock];
+    const tones = stockTones(stock);
+    // TSA's is the town's own pool, the day's: it keeps the day's names, 'STOCK VAULT' and 'POOL SITE'.
+    const town = stock === 'TSA';
+    const usdcFull = (USDC_FULL * STOCKS[stock].opening) / STOCKS.TSA.opening;
     const group = new THREE.Group();
-    group.name = 'pool';
-    group.position.set(SITES.pool[0], 0, SITES.pool[1]);
+    group.name = town ? 'pool' : `pool:${stock}`;
+    group.position.set(site[0], 0, site[1]);
 
     const R = 2.02;
     const STOCK: readonly [number, number] = [-1.7, -2.75];
@@ -125,7 +143,7 @@ export function createPool(): PoolPlace {
     const plotSign = makeSign({
         width: 1.5,
         height: 0.42,
-        text: 'POOL SITE',
+        text: town ? 'POOL SITE' : `${stock} POOL SITE`,
         color: '#6a4a36',
         background: '#fff6e2',
         border: '#c08e62',
@@ -173,7 +191,7 @@ export function createPool(): PoolPlace {
         s.capsule(0.045, 0.2, { color: '#8a5f43', at: [x + 0.05, 0.72, z + 0.04] });
     }
     // The vaults, each on a stone pad with a pipe to the pond.
-    s.group({ at: [STOCK[0], 0, STOCK[1]] }, (g) => barrel(g, PALETTE.stock));
+    s.group({ at: [STOCK[0], 0, STOCK[1]] }, (g) => barrel(g, tones.deep));
     s.group({ at: [USDC[0], 0, USDC[1]] }, (g) => barrel(g, PALETTE.usdc));
     s.tube(
         [
@@ -220,12 +238,12 @@ export function createPool(): PoolPlace {
     });
     const gauges: { fill: THREE.Mesh; level: number; goal: number }[] = [];
     const GAUGE_H = 1.25;
-    for (const [site, tone] of [
-        [STOCK, PALETTE.stock],
+    for (const [spot, tone] of [
+        [STOCK, tones.deep],
         [USDC, PALETTE.usdc],
     ] as const) {
-        const x = site[0] + 0.62;
-        const z = site[1] + 0.62;
+        const x = spot[0] + 0.62;
+        const z = spot[1] + 0.62;
         const frame = new Sculpt();
         frame.cyl(0.11, 0.11, 0.06, { color: PALETTE.woodDark, at: [x, 0.12, z], seg: 12 });
         frame.cyl(0.11, 0.11, 0.06, { color: PALETTE.woodDark, at: [x, 0.18 + GAUGE_H, z], seg: 12 });
@@ -258,8 +276,8 @@ export function createPool(): PoolPlace {
 
     // Name plates on the casks.
     const plates: THREE.Mesh[] = [];
-    for (const [site, text, tone] of [
-        [STOCK, 'STOCK VAULT', '#c9506a'],
+    for (const [spot, text, tone] of [
+        [STOCK, town ? 'STOCK VAULT' : `${stock} VAULT`, tones.plate],
         [USDC, 'USDC VAULT', '#3a6fc0'],
     ] as const) {
         const plate = makeSign({
@@ -272,7 +290,7 @@ export function createPool(): PoolPlace {
             weight: 700,
             density: 190,
         });
-        plate.mesh.position.set(site[0] + 0.56, 1.02, site[1] + 0.56);
+        plate.mesh.position.set(spot[0] + 0.56, 1.02, spot[1] + 0.56);
         plate.mesh.rotation.y = Math.PI / 4;
         built.add(plate.mesh);
         plates.push(plate.mesh);
@@ -344,7 +362,7 @@ export function createPool(): PoolPlace {
         uniforms: {
             time: { value: 0 },
             glow: { value: 0.3 },
-            stock: { value: new THREE.Color('#f59bb0') },
+            stock: { value: new THREE.Color(tones.water) },
             dollars: { value: new THREE.Color('#6fb1ee') },
             foam: { value: new THREE.Color('#ffffff') },
             ripple: { value: new THREE.Vector4(0.5, 0.5, 9, 0) },
@@ -363,7 +381,7 @@ export function createPool(): PoolPlace {
     // Two koi, one of each colour, circling.
     const koi: { node: THREE.Group; radius: number; speed: number; phase: number }[] = [];
     for (const [tone, radius, speed, phase] of [
-        ['#ff8fa6', 1.2, 0.5, 0],
+        [tones.koi, 1.2, 0.5, 0],
         ['#4d8fe8', 0.7, -0.62, 2.4],
     ] as const) {
         const fish = new Sculpt();
@@ -408,6 +426,11 @@ export function createPool(): PoolPlace {
     let boardPop = 0;
 
     const hitbox = makeHitbox(6.6, 2.4, 6.2, [0.3, 0, -0.8]);
+    // The price board stands past the box's left edge and above it: a box of its own, inside the first.
+    const boardBox = makeHitbox(2.7, 3.4, 0.5);
+    boardBox.position.set(BOARD[0], 1.7, BOARD[1]).sub(hitbox.position);
+    boardBox.rotation.y = Math.PI / 4;
+    hitbox.add(boardBox);
     group.add(hitbox);
 
     let stage: PoolStage = 'none';
@@ -419,6 +442,7 @@ export function createPool(): PoolPlace {
     built.visible = false;
 
     return {
+        stock,
         group,
         hitbox,
         anchors: {
@@ -447,11 +471,11 @@ export function createPool(): PoolPlace {
             if (snap) iceAmount = iceGoal;
         },
         setVaults(tsa, usdc, recordedTsa) {
-            (gauges[0] as { goal: number }).goal = clamp(tsa / 160, 0, 1);
-            (gauges[1] as { goal: number }).goal = clamp(usdc / 2000, 0, 1);
+            (gauges[0] as { goal: number }).goal = clamp(tsa / STOCK_FULL, 0, 1);
+            (gauges[1] as { goal: number }).goal = clamp(usdc / usdcFull, 0, 1);
             short = tsa < recordedTsa - 1e-6;
             pointerNode.visible = stage === 'open';
-            pointerNode.position.y = 0.18 + clamp(recordedTsa / 160, 0, 1) * GAUGE_H;
+            pointerNode.position.y = 0.18 + clamp(recordedTsa / STOCK_FULL, 0, 1) * GAUGE_H;
         },
         setBoard(main, sub, tone = 'open') {
             board.set({ text: main, sub, color: tone === 'alert' ? '#b13b33' : '#6a4a36' });
@@ -465,6 +489,8 @@ export function createPool(): PoolPlace {
             rippleAge = 0;
         },
         update(dt, time) {
+            // A pool in the hidden market quarter waits where it is.
+            if (!group.visible) return;
             now = time;
             // The basin pops out of the ground with a bounce.
             builtScale = damp(builtScale, builtGoal, 5, dt);

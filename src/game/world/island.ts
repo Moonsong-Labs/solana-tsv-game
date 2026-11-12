@@ -7,6 +7,7 @@ import * as THREE from 'three';
 
 import { PALETTE, Sculpt, seeded } from '../scene/kit.ts';
 import { ENTRY_Z, EXIT_X, HALF, ISLAND, RAIL, SITES, SPOTS, queueSpot } from './layout.ts';
+import { KERB_TONES, LIFT, PAVE, PLAZA_ACCENT, Paving, type Rect, type Road, rectAt } from './paving.ts';
 import {
     Bits,
     FLOWER_TONES,
@@ -33,7 +34,6 @@ import {
     mapleTree,
     mossMound,
     noticeBoard,
-    paver,
     pebbles,
     pineTree,
     planter,
@@ -47,60 +47,12 @@ import {
     woodPile,
 } from './props.ts';
 
-/** Height of the road and plaza surface above the grass. */
-export const PAVE = 0.05;
-
-/** How far the joints between paving stones sink below the walking surface. */
-const RELIEF = 0.012;
-/** The width of a joint. */
-const JOINT = 0.036;
-/** Roads that overlap sit this far apart in height, so they never flicker. */
-const LIFT = 0.0006;
-
-const GROUT = '#c8b189';
-const ROAD_TONES = ['#f0e4c9', '#ecdfc2', '#f3e8d0', '#e9dbbc'] as const;
-const ROAD_ACCENTS = ['#e3ceae', '#dcd3c3', '#e8d2bc'] as const;
-const PLAZA_TONES = ['#f5ebd6', '#f2e6cf', '#f7efdd', '#efe3ca'] as const;
-const PLAZA_ACCENT = '#e8cbb3';
-const KERB_TONES = ['#d8ccb5', '#d2c6ae', '#ddd3bf'] as const;
-
 export interface Island {
     group: THREE.Group;
     /** Sways the trees and drifts the clouds. */
     update(dt: number, time: number): void;
-}
-
-/** A patch of ground with sides along X and Z. */
-interface Rect {
-    x0: number;
-    z0: number;
-    x1: number;
-    z1: number;
-}
-
-/** A rectangle from its centre and size. */
-function rectAt(x: number, z: number, w: number, d: number): Rect {
-    return { x0: x - w / 2, z0: z - d / 2, x1: x + w / 2, z1: z + d / 2 };
-}
-
-/** What is left of `piece` outside `hole`: up to four rectangles. */
-function cutOut(piece: Rect, hole: Rect): Rect[] {
-    if (piece.x1 <= hole.x0 || piece.x0 >= hole.x1 || piece.z1 <= hole.z0 || piece.z0 >= hole.z1) return [piece];
-    const left: Rect[] = [];
-    if (piece.x0 < hole.x0) left.push({ ...piece, x1: hole.x0 });
-    if (piece.x1 > hole.x1) left.push({ ...piece, x0: hole.x1 });
-    const x0 = Math.max(piece.x0, hole.x0);
-    const x1 = Math.min(piece.x1, hole.x1);
-    if (piece.z0 < hole.z0) left.push({ x0, x1, z0: piece.z0, z1: hole.z0 });
-    if (piece.z1 > hole.z1) left.push({ x0, x1, z0: hole.z1, z1: piece.z1 });
-    return left;
-}
-
-/** A road or the plaza. `run` is the way its stones are laid; a higher `rank` runs through where two meet. */
-interface Road {
-    area: Rect;
-    run: 'x' | 'z' | 'plaza';
-    rank: number;
+    /** Moves the clouds that drift where the market quarter hangs out of its way, or back home. */
+    makeRoom(quarter: boolean): void;
 }
 
 export function createIsland(): Island {
@@ -176,104 +128,18 @@ export function createIsland(): Island {
     road(6.6, -5.6, 5.8, 1.3, 'x');
     road(7.9, 2.4, 3.6, 1.4, 'x');
     road(4.9, 9.6, 3.6, 1.2, 'x');
-    roads.forEach((item, i) => {
-        item.rank = roads.length - i;
-    });
-
     // ----- Paving: a bed for the joints, then the stones -----
-    const stones = new Bits();
-    const laid = seeded(4177);
-    const pick = <T>(list: readonly T[]): T => list[Math.floor(laid() * list.length)] as T;
-    /** Lays one stone in `cell`, cut back to what lies outside `holes`, with half a joint clear all round. */
-    const lay = (cell: Rect, holes: readonly Rect[], top: number, tone: string): void => {
-        let pieces: Rect[] = [cell];
-        for (const hole of holes) pieces = pieces.flatMap((piece) => cutOut(piece, hole));
-        for (const piece of pieces) {
-            const x0 = piece.x0 + JOINT / 2;
-            const x1 = piece.x1 - JOINT / 2;
-            const z0 = piece.z0 + JOINT / 2;
-            const z1 = piece.z1 - JOINT / 2;
-            if (x1 - x0 < 0.09 || z1 - z0 < 0.09) continue;
-            paver(stones, tone, x0, z0, x1, z1, top - RELIEF, RELIEF);
-        }
-    };
-    /** Walks from `from` to `to` in stone lengths between `min` and `max`. */
-    const course = (from: number, to: number, min: number, max: number, each: (a: number, b: number) => void): void => {
-        // Start part-way into a stone, so neighbouring courses break joint.
-        let at = from - laid() * min * 0.6;
-        while (at < to - 1e-6) {
-            let next = at + min + laid() * (max - min);
-            if (to - next < min * 0.6) next = to;
-            each(Math.max(at, from), next);
-            at = next;
-        }
-    };
-
+    const paving = new Paving(4177);
     // A band of darker stone across the entry road under the gate: the venue's threshold.
     const threshold = rectAt(gateX, ENTRY_Z, 0.48, 1.9 - 0.4);
-
-    roads.forEach((item, index) => {
-        const { area, run, rank } = item;
-        const lift = rank * LIFT;
-        const top = PAVE + lift;
-        const w = area.x1 - area.x0;
-        const d = area.z1 - area.z0;
-        const centre: [number, number, number] = [(area.x0 + area.x1) / 2, 0, (area.z0 + area.z1) / 2];
-        // The margin, a step lower, and the bed the joints show.
-        ground.box(w + 0.16, PAVE * 0.6 + lift, d + 0.16, { color: PALETTE.pathEdge, at: centre, r: 0 });
-        ground.box(w, PAVE - RELIEF + lift, d, { color: GROUT, at: centre, r: 0 });
-
-        if (run === 'plaza') {
-            // A border course all round, then square tiles with a regular scatter of rose ones.
-            const k = 0.26;
-            const { x0, x1, z0, z1 } = area;
-            const border = (cell: (a: number, b: number) => Rect, from: number, to: number): void =>
-                course(from, to, 0.7, 1.1, (a, b) => lay(cell(a, b), [], top, pick(KERB_TONES)));
-            border((a, b) => ({ x0: a, x1: b, z0, z1: z0 + k }), x0, x1);
-            border((a, b) => ({ x0: a, x1: b, z0: z1 - k, z1 }), x0, x1);
-            border((a, b) => ({ x0, x1: x0 + k, z0: a, z1: b }), z0 + k, z1 - k);
-            border((a, b) => ({ x0: x1 - k, x1, z0: a, z1: b }), z0 + k, z1 - k);
-            const nx = Math.round((w - 2 * k) / 0.64);
-            const nz = Math.round((d - 2 * k) / 0.64);
-            const sx = (w - 2 * k) / nx;
-            const sz = (d - 2 * k) / nz;
-            for (let i = 0; i < nx; i += 1) {
-                for (let j = 0; j < nz; j += 1) {
-                    const tone = (i + 2 * j) % 5 === 0 ? PLAZA_ACCENT : pick(PLAZA_TONES);
-                    lay(rectAt(x0 + k + (i + 0.5) * sx, z0 + k + (j + 0.5) * sz, sx, sz), [], top, tone);
-                }
-            }
-            return;
-        }
-
-        // A road: a kerb course down each side, courses of varied stones between.
-        const holes = roads.slice(0, index).map((other) => other.area);
-        if (item === entry) holes.push(threshold);
-        const alongX = run === 'x';
-        const [from, to, c0, c1] = alongX ? [area.x0, area.x1, area.z0, area.z1] : [area.z0, area.z1, area.x0, area.x1];
-        const cell = (a: number, b: number, c: number, e: number): Rect =>
-            alongX ? { x0: a, x1: b, z0: c, z1: e } : { x0: c, x1: e, z0: a, z1: b };
-        const wide = c1 - c0;
-        const kerb = wide >= 1.6 ? 0.2 : 0.16;
-        for (const side of [c0, c1 - kerb]) {
-            course(from, to, 0.8, 1.3, (a, b) => lay(cell(a, b, side, side + kerb), holes, top, pick(KERB_TONES)));
-        }
-        const rows = Math.max(2, Math.round((wide - 2 * kerb) / 0.5));
-        const step = (wide - 2 * kerb) / rows;
-        for (let row = 0; row < rows; row += 1) {
-            const near = c0 + kerb + row * step;
-            course(from, to, 0.46, 0.82, (a, b) =>
-                lay(cell(a, b, near, near + step), holes, top, laid() < 0.14 ? pick(ROAD_ACCENTS) : pick(ROAD_TONES)),
-            );
-        }
-    });
+    paving.roads(ground, roads, (item) => (item === entry ? [threshold] : []));
 
     // The threshold's own stones.
     {
         const top = PAVE + entry.rank * LIFT;
         const span = (threshold.z1 - threshold.z0) / 3;
         for (let i = 0; i < 3; i += 1) {
-            lay(
+            paving.lay(
                 { x0: threshold.x0, x1: threshold.x1, z0: threshold.z0 + i * span, z1: threshold.z0 + (i + 1) * span },
                 [],
                 top,
@@ -282,66 +148,16 @@ export function createIsland(): Island {
         }
     }
 
-    /** Stones laid in a ring between two radii round (cx, cz), on a bed at height `y`. */
-    const ringOf = (
-        cx: number,
-        cz: number,
-        r0: number,
-        r1: number,
-        count: number,
-        y: number,
-        tone: (i: number) => string,
-    ): void => {
-        const gap = JOINT / (r0 + r1);
-        for (let i = 0; i < count; i += 1) {
-            const a0 = (i / count) * Math.PI * 2 + gap;
-            const a1 = ((i + 1) / count) * Math.PI * 2 - gap;
-            flagstone(
-                stones,
-                tone(i),
-                [
-                    [cx + Math.cos(a0) * r0, cz + Math.sin(a0) * r0],
-                    [cx + Math.cos(a1) * r0, cz + Math.sin(a1) * r0],
-                    [cx + Math.cos(a1) * r1, cz + Math.sin(a1) * r1],
-                    [cx + Math.cos(a0) * r1, cz + Math.sin(a0) * r1],
-                ],
-                y,
-                0.007,
-                0.016,
-            );
-        }
-    };
-    /** A flat ring of joint colour for ring stones to sit on. */
-    const ringBed = (cx: number, cz: number, r0: number, r1: number, y: number, sides = 56): void => {
-        for (let i = 0; i < sides; i += 1) {
-            const a0 = (i / sides) * Math.PI * 2;
-            const a1 = ((i + 1) / sides) * Math.PI * 2;
-            stones.quad(
-                GROUT,
-                [cx + Math.cos(a0) * r0, y, cz + Math.sin(a0) * r0],
-                [cx + Math.cos(a1) * r0, y, cz + Math.sin(a1) * r0],
-                [cx + Math.cos(a1) * r1, y, cz + Math.sin(a1) * r1],
-                [cx + Math.cos(a0) * r1, y, cz + Math.sin(a0) * r1],
-            );
-        }
-    };
-
     // Round the pond: two rings of kerb stones with a fan of two-tone stones between them.
-    {
-        const bed = PAVE + plaza.rank * LIFT + 0.003;
-        ringBed(poolX, poolZ, 2.1, 3.1, bed);
-        ringOf(poolX, poolZ, 2.14, 2.33, 30, bed, () => pick(KERB_TONES));
-        ringOf(poolX, poolZ, 2.37, 2.85, 24, bed, (i) => (i % 2 === 0 ? PLAZA_ACCENT : pick(PLAZA_TONES)));
-        ringOf(poolX, poolZ, 2.89, 3.07, 42, bed, () => pick(KERB_TONES));
-    }
+    paving.pondRing(poolX, poolZ, PAVE + plaza.rank * LIFT + 0.003);
     // A round stone in the road where a visitor stands at the booth's window.
     {
         const [wx, , wz] = SPOTS.window;
         const bed = PAVE + entry.rank * LIFT + 0.003;
-        ringBed(wx, wz, 0, 0.43, bed, 16);
-        ringOf(wx, wz, 0.3, 0.42, 10, bed, () => pick(KERB_TONES));
+        paving.ringBed(wx, wz, 0, 0.43, bed, 16);
+        paving.ring(wx, wz, 0.3, 0.42, 10, bed, () => paving.pick(KERB_TONES));
         flagstone(
-            stones,
+            paving.stones,
             PLAZA_ACCENT,
             Array.from({ length: 12 }, (_, i): [number, number] => {
                 const a = (i / 12) * Math.PI * 2;
@@ -352,7 +168,7 @@ export function createIsland(): Island {
             0.016,
         );
     }
-    stones.into(ground);
+    paving.stones.into(ground);
 
     // Stepping stones: through the garden, and to the doors the roads stop short of.
     const steps: ReadonlyArray<readonly [number, number, number]> = [
@@ -737,6 +553,12 @@ export function createIsland(): Island {
         [-19, 1, -9, 0.95],
         [19, 2.5, -15, 1.05],
     ];
+    // While the market quarter is there, two clouds drift elsewhere: the third would sit among the
+    // quarter's rocks, and the first would peek out between the two islands, behind the quarter's boards.
+    const moved: ReadonlyArray<readonly [index: number, away: readonly [number, number, number]]> = [
+        [2, [-12, -5.5, 30]],
+        [0, [-31, 0, 7]],
+    ];
     sky.forEach(([x, y, z, size], i) => {
         const s = new Sculpt();
         cloud(s, [0, 0, 0], size, i + 1);
@@ -760,6 +582,16 @@ export function createIsland(): Island {
             for (const item of clouds) {
                 item.node.position.x = item.base + Math.sin(time * item.speed * 0.25 + item.base) * 1.6;
                 item.node.position.y += Math.sin(time * 0.5 + item.base) * 0.0006;
+            }
+        },
+        makeRoom(quarter) {
+            for (const [index, away] of moved) {
+                const item = clouds[index];
+                const home = sky[index];
+                if (!item || !home) continue;
+                const [x, y, z] = quarter ? away : home;
+                item.node.position.set(x, y, z);
+                item.base = x;
             }
         },
     };

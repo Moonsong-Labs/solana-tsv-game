@@ -7,13 +7,16 @@
 import { useEffect, useState } from 'react';
 
 import { AVAILABILITY_LABEL, PLACES } from '../content/places.ts';
-import type { GameState } from '../core/state.ts';
+import type { GameState, ManagerState } from '../core/state.ts';
 import { CASE_COUNT, type ChapterDef } from '../sim/campaign.ts';
 import { clock, date, money } from '../sim/format.ts';
+import { listed } from '../sim/park.ts';
 import { CHECKS, REASONS, price } from '../sim/rules.ts';
 import type { Availability } from '../sim/types.ts';
 import { useGame, useGameState } from './context.tsx';
 import { Icon } from './icons.tsx';
+import { openPicker } from './manager/picker.ts';
+import { stockState } from './manager/words.ts';
 
 export function Tag({ availability, label }: { availability: Availability | 'mock'; label?: string }) {
     return (
@@ -85,6 +88,47 @@ function Bulletin({ state }: { state: GameState }) {
     );
 }
 
+/** Manager mode's bulletin: the venue clock, one chip per listed stock, and the halt feed when halts are in force. */
+function ParkBulletin({ manager }: { manager: ManagerState }) {
+    const park = manager.park;
+    return (
+        <div className="gk-bulletin gk-bulletin--park">
+            <div className="gk-chip gk-chip--clock">
+                {Icon.clock(16)}
+                <span>{date(park.now)}</span>
+                <b className="gk-mono">{clock(park.now)}</b>
+            </div>
+            {listed(park).map((stock) => {
+                const shown = stockState(park, stock);
+                return (
+                    <div key={stock} className="gk-chip gk-chip--stock" data-tone={shown.tone} title={shown.title}>
+                        <i className="gk-dot" />
+                        <em className="gk-chip__sym">{stock}</em>
+                        <b className={shown.tone === 'good' || shown.tone === 'warn' ? 'gk-mono' : undefined}>
+                            {shown.text}
+                        </b>
+                    </div>
+                );
+            })}
+            {park.features.halts && (
+                <div
+                    className="gk-chip gk-chip--feed"
+                    data-tone={park.poster ? 'good' : 'bad'}
+                    title={
+                        park.poster
+                            ? 'The halt poster is posting: the evidence is fresh.'
+                            : 'The halt poster is silent: the evidence goes stale and the pools fail closed (7007).'
+                    }
+                >
+                    <i className="gk-dot" />
+                    <span>Halt feed</span>
+                    <b>{park.poster ? 'FRESH' : 'SILENT'}</b>
+                </div>
+            )}
+        </div>
+    );
+}
+
 export function TopBar() {
     const game = useGame();
     const state = useGameState();
@@ -107,8 +151,11 @@ export function TopBar() {
         };
     }, [menu]);
     if (state.phase === 'title' || state.phase === 'loading') return null;
+    // Running the venue: the scenario's pill, the venue's bulletin and the moves against par.
+    const manager = state.mode === 'manager' ? state.manager : undefined;
+    const scenario = manager?.scenario;
     return (
-        <header className="gk-top">
+        <header className="gk-top" data-mode={manager ? 'manager' : undefined}>
             <div className="gk-top__left">
                 <button
                     type="button"
@@ -120,7 +167,14 @@ export function TopBar() {
                     {Icon.gate(22)}
                     <b>Gatekeeper</b>
                 </button>
-                {state.chapter && (
+                {scenario && (
+                    <div className="gk-chapterpill">
+                        <span>{scenario.number ? `Scenario ${scenario.number}` : 'Run the venue'}</span>
+                        <b>{scenario.title}</b>
+                        <Tag availability={scenario.availability} />
+                    </div>
+                )}
+                {!manager && state.chapter && (
                     <div className="gk-chapterpill">
                         <span>{state.chapter.number === 0 ? 'Prologue' : `Chapter ${state.chapter.number}`}</span>
                         <b>{state.chapter.title}</b>
@@ -129,13 +183,28 @@ export function TopBar() {
                 )}
                 {menu && (
                     <div className="gk-menu" role="menu">
-                        <button
-                            type="button"
-                            role="menuitem"
-                            onClick={() => (setMenu(false), game.begin({ tour: false }))}
-                        >
-                            Restart the day
-                        </button>
+                        {manager ? (
+                            <>
+                                <button
+                                    type="button"
+                                    role="menuitem"
+                                    onClick={() => (setMenu(false), game.manager.restart())}
+                                >
+                                    Restart the scenario
+                                </button>
+                                <button type="button" role="menuitem" onClick={() => (setMenu(false), openPicker())}>
+                                    All scenarios
+                                </button>
+                            </>
+                        ) : (
+                            <button
+                                type="button"
+                                role="menuitem"
+                                onClick={() => (setMenu(false), game.begin({ tour: false }))}
+                            >
+                                Restart the day
+                            </button>
+                        )}
                         <button type="button" role="menuitem" onClick={() => (setMenu(false), game.quit())}>
                             Back to the title
                         </button>
@@ -157,34 +226,55 @@ export function TopBar() {
                 )}
             </div>
             {/* The fly-over shows the finished town, not the venue's state: its bulletin waits for the day to start. */}
-            {state.phase !== 'tour' && <Bulletin state={state} />}
+            {manager ? <ParkBulletin manager={manager} /> : state.phase !== 'tour' && <Bulletin state={state} />}
             <div className="gk-top__right">
-                <div className="gk-score" title="Points · decisions that match the pool's">
-                    {Icon.star(16)}
-                    <b key={score.points} className={score.points > 0 ? 'gk-score__points' : undefined}>
-                        {score.points}
-                    </b>
-                    {score.streak > 1 && (
-                        <span className="gk-score__streak">
-                            {Icon.flame(14)}
-                            {score.streak}
-                        </span>
-                    )}
-                    <i>
-                        {state.cases}/{CASE_COUNT}
-                    </i>
-                </div>
-                <button
-                    type="button"
-                    className="gk-iconbtn"
-                    data-on={settings.autoplay}
-                    onClick={() => game.patchSettings({ autoplay: !settings.autoplay })}
-                    title="Autoplay: the game plays itself (P)"
-                    data-control="autoplay"
-                >
-                    {settings.autoplay ? Icon.pause(18) : Icon.play(18)}
-                    <span>{settings.autoplay ? 'Auto on' : 'Auto'}</span>
-                </button>
+                {manager && scenario && (
+                    <div
+                        className="gk-score gk-moves"
+                        title={scenario.sandbox ? 'Free play: no par' : 'Moves taken · par'}
+                        data-over={!scenario.sandbox && manager.actions > scenario.par ? true : undefined}
+                    >
+                        {Icon.key(16)}
+                        {scenario.sandbox ? (
+                            <b className="gk-moves__free">Free play</b>
+                        ) : (
+                            <>
+                                <b>{manager.actions}</b>
+                                <i>par {scenario.par}</i>
+                            </>
+                        )}
+                    </div>
+                )}
+                {!manager && (
+                    <div className="gk-score" title="Points · decisions that match the pool's">
+                        {Icon.star(16)}
+                        <b key={score.points} className={score.points > 0 ? 'gk-score__points' : undefined}>
+                            {score.points}
+                        </b>
+                        {score.streak > 1 && (
+                            <span className="gk-score__streak">
+                                {Icon.flame(14)}
+                                {score.streak}
+                            </span>
+                        )}
+                        <i>
+                            {state.cases}/{CASE_COUNT}
+                        </i>
+                    </div>
+                )}
+                {!manager && (
+                    <button
+                        type="button"
+                        className="gk-iconbtn"
+                        data-on={settings.autoplay}
+                        onClick={() => game.patchSettings({ autoplay: !settings.autoplay })}
+                        title="Autoplay: the game plays itself (P)"
+                        data-control="autoplay"
+                    >
+                        {settings.autoplay ? Icon.pause(18) : Icon.play(18)}
+                        <span>{settings.autoplay ? 'Auto on' : 'Auto'}</span>
+                    </button>
+                )}
                 <button
                     type="button"
                     className="gk-iconbtn"
@@ -357,7 +447,8 @@ export function ChapterCard() {
 export function PlaceCard() {
     const game = useGame();
     const state = useGameState();
-    if (!state.info) return null;
+    // Running the venue, a building opens its menu instead.
+    if (!state.info || state.mode === 'manager') return null;
     const info = PLACES[state.info];
     const kind = { actor: 'Actor', service: 'Service', contract: 'Contract', chain: 'Chain' }[info.kind];
     return (
@@ -392,7 +483,14 @@ export function Feed() {
     useEffect(() => {
         if (state.phase === 'title') setOpen(false);
     }, [state.phase]);
-    if (state.phase === 'title' || state.phase === 'loading' || state.phase === 'summary' || state.ledger.length === 0)
+    // Running the venue, the record is a tab of the objectives panel.
+    if (
+        state.phase === 'title' ||
+        state.phase === 'loading' ||
+        state.phase === 'summary' ||
+        state.ledger.length === 0 ||
+        state.mode === 'manager'
+    )
         return null;
     const entries = [...state.ledger].reverse();
     return (

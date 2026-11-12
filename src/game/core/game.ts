@@ -24,11 +24,16 @@ import {
 } from '../sim/campaign.ts';
 import { amount, clock, money } from '../sim/format.ts';
 import { bandWidth, judge, price, reasonDef, settle, settledWord, stepLamp } from '../sim/rules.ts';
+import type { StockId } from '../sim/park.ts';
+import type { ScenarioId } from '../sim/scenarios.ts';
 import type { Quote, ReasonId, TradeRequest, Venue, Verdict, WalletId } from '../sim/types.ts';
 import type { Character, LookId } from '../world/character.ts';
+import { stockToken } from '../world/fx.ts';
 import type { LampState } from '../world/gate.ts';
 import { SPOTS, VIEWS, queueSpot, type ViewId } from '../world/layout.ts';
+import type { PoolPlace } from '../world/pool.ts';
 import { World, type PlaceId } from '../world/world.ts';
+import { Manager } from './manager.ts';
 import { Overlay } from './overlay.ts';
 import { playScene, playSetupStep, playTour } from './scenes.ts';
 import type { GameState, Grade, LedgerEntry, Paper, Settings } from './state.ts';
@@ -50,6 +55,8 @@ export class Game {
     readonly world: World;
     readonly t: Timeline;
     readonly overlay: Overlay;
+    /** Manager mode's director. */
+    readonly manager: Manager;
     venue: Venue = openingVenue();
 
     private readonly pending = new Map<string, Pending>();
@@ -78,6 +85,7 @@ export class Game {
         this.overlay = new Overlay(stage, overlayRoot, () => this.audio);
         this.store = new Store<GameState>({
             phase: 'loading',
+            mode: 'gate',
             beat: 0,
             venue: this.venue,
             rev: 0,
@@ -96,6 +104,7 @@ export class Game {
             sound: false,
         });
         stage.timeScale = this.settings.speed;
+        this.manager = new Manager(this);
 
         this.overlay.createTags(
             (Object.keys(PLACES) as PlaceId[]).map((id) => ({
@@ -106,8 +115,13 @@ export class Game {
                 anchor: this.world.places[id].anchors.label ?? new THREE.Vector3(),
             })),
         );
-        this.overlay.onTag = (id) => this.clickPlace(id as PlaceId);
-        stage.onPick = (hit) => this.clickPlace(hit.id as PlaceId);
+        this.overlay.onTag = (id) => this.clickPlace(id);
+        stage.onPick = (hit) => this.clickPlace(hit.id);
+        // Running the venue, a click on open ground closes the building's menu, as in a tower game; not
+        // while an action or a trade plays, when the menu has stepped aside.
+        stage.onMiss = () => {
+            if (this.store.get().mode === 'manager' && this.manager.idle) this.manager.closeMenu();
+        };
         // The stage knows its size after the window does, so the title is framed from the stage's own resize.
         stage.onResize = () => this.handleResize();
         // When slow frames make the stage lower its quality, the menu follows.
@@ -303,7 +317,8 @@ export class Game {
         return true;
     }
 
-    private cancelAll(): void {
+    /** Stops every scripted moment and every wait, for a restart or a change of mode. */
+    cancelAll(): void {
         this.t.cancel();
         const error = new Cancelled();
         for (const entry of this.pending.values()) entry.reject(error);
@@ -321,6 +336,7 @@ export class Game {
     begin(opts: { chapter?: string; tour?: boolean; autoplay?: boolean; fromLink?: boolean } = {}): void {
         if (!opts.fromLink) void this.audio.unlock().then(() => this.store.set({ sound: this.audio.unlocked }));
         this.cancelAll();
+        this.manager.leave();
         this.resetDay();
         this.started = true;
         if (opts.autoplay !== undefined) this.patchSettings({ autoplay: opts.autoplay });
@@ -338,9 +354,16 @@ export class Game {
         });
     }
 
+    /** Starts manager mode on a scenario. */
+    beginManager(id: ScenarioId): void {
+        void this.audio.unlock().then(() => this.store.set({ sound: this.audio.unlocked }));
+        this.manager.begin(id);
+    }
+
     /** Back to the title screen. */
     quit(): void {
         this.cancelAll();
+        this.manager.leave();
         this.resetDay();
         this.started = false;
         this.showTitle();
@@ -391,7 +414,9 @@ export class Game {
 
     /** The stage changed size: the title's framing depends on it. */
     handleResize(): void {
-        if (this.store.get().phase === 'title') this.frameTitle();
+        const state = this.store.get();
+        if (state.phase === 'title') this.frameTitle();
+        else if (state.mode === 'manager') this.manager.frame();
     }
 
     /** Frames the island beside the title card, which covers the left of a wide screen. */
@@ -452,6 +477,10 @@ export class Game {
 
     /** Moves on: closes a chapter card, a setup result or a verdict. */
     next(): void {
+        if (this.store.get().phase === 'briefing') {
+            this.manager.start();
+            return;
+        }
         this.audio.play('click');
         if (this.fire('continue')) return;
         // The verdict is out but the visitor is still walking off: hurry that along, then move on.
@@ -466,6 +495,7 @@ export class Game {
     get awaitingNext(): boolean {
         if (this.pending.has('continue')) return true;
         const state = this.store.get();
+        if (state.phase === 'briefing') return true;
         return state.phase === 'judging' && state.verdict?.revealed === true;
     }
 
@@ -516,8 +546,16 @@ export class Game {
         }
     }
 
-    clickPlace(id: PlaceId): void {
+    /** A place was clicked in town or by its tag. Market-quarter pools have ids like 'pool:TSB'. */
+    clickPlace(target: string): void {
         const state = this.store.get();
+        // Running the venue, a click opens the building's menu.
+        if (state.mode === 'manager') {
+            if (state.phase === 'manage') this.manager.click(target);
+            return;
+        }
+        if (!(target in PLACES)) return;
+        const id = target as PlaceId;
         // During setup, clicking the place the step points at performs the step.
         if (
             state.phase === 'setup' &&
@@ -556,7 +594,8 @@ export class Game {
 
     // ----- The day -----
 
-    private resetDay(): void {
+    /** Puts the town and the day back as they start. */
+    resetDay(): void {
         this.venue = openingVenue();
         this.leaving.clear();
         this.askedKyc = false;
@@ -1086,7 +1125,10 @@ export class Game {
         truth: Verdict | undefined,
         slot: number,
         judged?: { grade: Grade; approved: boolean; cited?: ReasonId },
+        stock?: StockId,
+        time?: number,
     ): LedgerEntry {
+        const symbol = stock ?? 'TSA';
         const venue = this.venue;
         const who = venue.wallets[request.signer].name;
         const chapter = this.store.get().chapter;
@@ -1096,13 +1138,14 @@ export class Game {
         if (verdict.outcome === 'refuse') {
             const reason = verdict.reason ? reasonDef(verdict.reason) : undefined;
             summary = reason?.title ?? 'Refused';
-        } else if (request.op === 'buy') summary = `Bought ${amount(q.tsa)} TSA for ${amount(-q.usdc)} USDC`;
-        else if (request.op === 'sell') summary = `Sold ${amount(-q.tsa)} TSA for ${amount(q.usdc)} USDC`;
-        else if (request.op === 'deposit') summary = `Added ${amount(-q.tsa)} TSA + ${amount(-q.usdc)} USDC`;
-        else summary = `Withdrew ${amount(q.tsa)} TSA + ${amount(q.usdc)} USDC`;
+        } else if (request.op === 'buy') summary = `Bought ${amount(q.tsa)} ${symbol} for ${amount(-q.usdc)} USDC`;
+        else if (request.op === 'sell') summary = `Sold ${amount(-q.tsa)} ${symbol} for ${amount(q.usdc)} USDC`;
+        else if (request.op === 'deposit') summary = `Added ${amount(-q.tsa)} ${symbol} + ${amount(-q.usdc)} USDC`;
+        else summary = `Withdrew ${amount(q.tsa)} ${symbol} + ${amount(q.usdc)} USDC`;
         return {
             id,
-            time: venue.now,
+            // Manager mode keeps its own clock: the day's venue stays at its opening.
+            time: time ?? venue.now,
             who,
             request,
             outcome: verdict.outcome,
@@ -1112,6 +1155,7 @@ export class Game {
             grade: judged?.grade,
             stamp: judged ? { approved: judged.approved, cited: judged.cited } : undefined,
             chapter: chapter ? { id: chapter.id, number: chapter.number } : undefined,
+            stock,
             slot,
             shares: Math.abs(q.tsa),
             dollars: Math.abs(q.usdc),
@@ -1124,11 +1168,13 @@ export class Game {
         request: TradeRequest,
         truth: Verdict,
         judged?: { grade: Grade; approved: boolean; cited?: ReasonId },
+        stock?: StockId,
+        time?: number,
     ): Promise<void> {
         const { chain, gate, indexer, archive } = this.places;
         const kind = truth.outcome === 'fill' ? 'fill' : 'refusal';
         // Written before the animation, so the summary sees every decision even if the player races ahead.
-        const entry = this.entry(id, request, truth, chain.slot(), judged);
+        const entry = this.entry(id, request, truth, chain.slot(), judged, stock, time);
         this.store.set((state) => ({ ledger: [...state.ledger, entry] }));
         await this.t.guard(
             this.world.fx.fly(kind, gate.anchors.plaque, () => chain.openBlock(), {
@@ -1175,9 +1221,9 @@ export class Game {
         );
     }
 
-    /** Tokens flying between the visitor, the pond and the vaults for a filled trade. */
-    async settleFx(request: TradeRequest, fill: Quote, person: Character): Promise<void> {
-        const { pool } = this.places;
+    /** Tokens flying between the visitor, the pond and the vaults for a filled trade, at the TSA pool unless told otherwise. */
+    async settleFx(request: TradeRequest, fill: Quote, person: Character, pool: PoolPlace = this.places.pool): Promise<void> {
+        const symbol = pool.stock ?? 'TSA';
         const fx = this.world.fx;
         const hands = (): THREE.Vector3 => person.hands();
         const water = pool.anchors.water;
@@ -1192,12 +1238,12 @@ export class Game {
                 plop();
                 this.audio.play('coin');
                 await this.t.guard(
-                    fx.fly('stock', pool.anchors.stockVault, hands, { duration: 0.8, trail: '#ffd3df' }),
+                    fx.fly(stockToken(symbol), pool.anchors.stockVault, hands, { duration: 0.8, trail: '#ffd3df' }),
                 );
-                this.overlay.float(person.headTop(), `+${amount(fill.tsa)} TSA`, 'good');
+                this.overlay.float(person.headTop(), `+${amount(fill.tsa)} ${symbol}`, 'good');
                 break;
             case 'sell':
-                await this.t.guard(fx.fly('stock', hands, water, { duration: 0.7 }));
+                await this.t.guard(fx.fly(stockToken(symbol), hands, water, { duration: 0.7 }));
                 plop();
                 await this.t.guard(fx.fly('usdc', pool.anchors.usdcVault, hands, { duration: 0.8, trail: '#cfe3ff' }));
                 this.audio.play('coin');
@@ -1205,7 +1251,7 @@ export class Game {
                 break;
             case 'deposit':
                 await Promise.all([
-                    this.t.guard(fx.fly('stock', hands, water, { duration: 0.7 })),
+                    this.t.guard(fx.fly(stockToken(symbol), hands, water, { duration: 0.7 })),
                     this.t.guard(fx.fly('usdc', hands, water, { duration: 0.85 })),
                 ]);
                 plop();
@@ -1216,11 +1262,11 @@ export class Game {
                 await this.t.guard(fx.fly('lp', hands, water, { duration: 0.6 }));
                 plop();
                 await Promise.all([
-                    this.t.guard(fx.fly('stock', pool.anchors.stockVault, hands, { duration: 0.8, trail: '#ffd3df' })),
+                    this.t.guard(fx.fly(stockToken(symbol), pool.anchors.stockVault, hands, { duration: 0.8, trail: '#ffd3df' })),
                     this.t.guard(fx.fly('usdc', pool.anchors.usdcVault, hands, { duration: 0.95, trail: '#cfe3ff' })),
                 ]);
                 this.audio.play('coin');
-                this.overlay.float(person.headTop(), `+${amount(fill.tsa)} TSA  +${amount(fill.usdc)} USDC`, 'good');
+                this.overlay.float(person.headTop(), `+${amount(fill.tsa)} ${symbol}  +${amount(fill.usdc)} USDC`, 'good');
                 break;
         }
         this.world.fx.burst(person.headTop(), 'sparkle', 8);
@@ -1260,5 +1306,5 @@ const WINDOW_FACING = Math.PI / 2 + 0.3;
 
 /** The public feed's line for a fill: the side, the shares and the dollars. */
 function feedLine(entry: LedgerEntry): string {
-    return `${entry.request.op === 'buy' ? 'BUY' : 'SELL'} ${amount(entry.shares)} TSA $${money(entry.dollars)}`;
+    return `${entry.request.op === 'buy' ? 'BUY' : 'SELL'} ${amount(entry.shares)} ${entry.stock ?? 'TSA'} $${money(entry.dollars)}`;
 }

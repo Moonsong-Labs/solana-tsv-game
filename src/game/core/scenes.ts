@@ -87,7 +87,7 @@ export async function playTour(g: Game): Promise<void> {
 // ----- The setup steps -----
 
 /** Loads a venue or issuer action on the chain: a plum parcel from a place to the open block. */
-function adminTx(g: Game, from: THREE.Vector3): void {
+export function adminTx(g: Game, from: THREE.Vector3): void {
     const { chain } = g.places;
     run(async () => {
         await g.t.guard(
@@ -300,7 +300,7 @@ async function scriptedFill(g: Game, who: WalletId, item: (typeof RUSH)[number])
 }
 
 /** Flies one of the halt poster's cranes from the exchange to the halt board. */
-async function sendCrane(g: Game, note: 'halt' | 'resume' | 'heartbeat', index = 0): Promise<void> {
+export async function sendCrane(g: Game, note: 'halt' | 'resume' | 'heartbeat', index = 0): Promise<void> {
     const { exchange, haltBoard } = g.places;
     const crane = g.world.cranes[index];
     if (!crane) return;
@@ -322,7 +322,7 @@ async function sendCrane(g: Game, note: 'halt' | 'resume' | 'heartbeat', index =
 }
 
 /** A council role gathers its approvals, one lantern at a time. */
-async function vote(g: Game, role: Role, threshold: number): Promise<void> {
+export async function vote(g: Game, role: Role, threshold: number): Promise<void> {
     const { council } = g.places;
     const signer = g.world.find(`signer:${role}`);
     for (let i = 1; i <= threshold; i += 1) {

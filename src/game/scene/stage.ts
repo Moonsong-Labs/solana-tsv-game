@@ -270,6 +270,11 @@ interface Tracked {
     keepIn: readonly [number, number, number] | undefined;
 }
 
+interface Follower {
+    position: () => THREE.Vector3 | undefined;
+    place: (point: { x: number; y: number } | undefined) => void;
+}
+
 /** How fast the camera settles on a new view, per second. */
 const CAMERA_RATE = 2.6;
 
@@ -304,6 +309,7 @@ export class Stage {
 
     private readonly updaters = new Set<(dt: number, time: number) => void>();
     private readonly tracked = new Set<Tracked>();
+    private readonly followers = new Set<Follower>();
     private readonly pickables: { object: THREE.Object3D; id: string }[] = [];
     private readonly raycaster = new THREE.Raycaster();
     private readonly pointer = new THREE.Vector2(2, 2);
@@ -333,12 +339,21 @@ export class Stage {
     onHover: ((id: string | undefined) => void) | undefined;
     /** Called when a pickable is clicked. */
     onPick: ((hit: PickHit) => void) | undefined;
+    /** Called when a click lands on nothing pickable (open ground, water, sky); a drag never counts. */
+    onMiss: (() => void) | undefined;
     /** Called after the stage has taken a new size. */
     onResize: (() => void) | undefined;
     /** Called when the quality changes, by the player or by the stage itself. */
     onQuality: ((quality: Quality) => void) | undefined;
     /** Whether the player may pan and zoom. */
     freeCamera = true;
+    /** How far the player may drag the view from the directed one, in world units across and up the screen. */
+    panLimit = { x: 16, y: 12 };
+
+    /** The point the sun aims at; its shadows cover a square around it (see `setShadowFrame`). */
+    private readonly shadowTarget = new THREE.Vector3(0, 0, 0);
+    /** Pickables that clicks and hovering pass through, by id. */
+    private readonly unpickable = new Set<string>();
 
     constructor(
         readonly canvas: HTMLCanvasElement,
@@ -364,11 +379,7 @@ export class Stage {
         this.sun.shadow.mapSize.set(2048, 2048);
         this.sun.shadow.camera.near = 1;
         this.sun.shadow.camera.far = 120;
-        const reach = 23;
-        this.sun.shadow.camera.left = -reach;
-        this.sun.shadow.camera.right = reach;
-        this.sun.shadow.camera.top = reach;
-        this.sun.shadow.camera.bottom = -reach;
+        this.frameShadow(23);
         this.sun.shadow.bias = -0.0006;
         this.sun.shadow.normalBias = 0.035;
         // Soft-edged and light: things sit on the ground in a pool of shade, not on a black cut-out.
@@ -555,7 +566,11 @@ export class Stage {
 
     // ----- Camera -----
 
-    /** Directs the camera to a new view; it eases there. Clears the player's own pan and zoom. */
+    /**
+     * Directs the camera to a new view; it eases there. The player's own pan and zoom are cleared:
+     * the view takes them over first, so the move starts from what is on screen rather than jumping
+     * back to the directed view.
+     */
     look(
         view: Partial<{
             target: THREE.Vector3 | readonly [number, number, number];
@@ -572,9 +587,7 @@ export class Stage {
         if (view.span !== undefined) this.goal.span = view.span;
         if (view.lift !== undefined) this.goal.lift = view.lift;
         if (view.shift !== undefined) this.goal.shift = view.shift;
-        this.nudge.x = 0;
-        this.nudge.y = 0;
-        this.nudge.zoom = 1;
+        this.absorbNudge();
         if (snap) {
             this.view.target.copy(this.goal.target);
             this.view.span = this.goal.span;
@@ -582,6 +595,85 @@ export class Stage {
             this.view.shift = this.goal.shift;
             this.updateCamera(0);
         }
+    }
+
+    /**
+     * Moves the player's pan and zoom into the view itself, leaving the camera where it is on screen:
+     * the zoom divides the span, and the pan (along the camera's last right and up) moves the target.
+     * `lift` and `shift` scale with the span the camera shows, which does not change.
+     */
+    private absorbNudge(): void {
+        const { x, y, zoom } = this.nudge;
+        this.view.span /= zoom;
+        this.view.target.addScaledVector(this.scratch.right, x).addScaledVector(this.scratch.up, y);
+        this.nudge.x = 0;
+        this.nudge.y = 0;
+        this.nudge.zoom = 1;
+    }
+
+    /**
+     * Aims the sun at `target` and sizes its shadows to a square `±reach`
+     * around it. The default frame (the origin, 23) holds the main island;
+     * a larger one holds more, with softer shadows, as the same shadow map
+     * spreads over more ground.
+     */
+    setShadowFrame(target: THREE.Vector3 | readonly [number, number, number], reach: number): void {
+        if (target instanceof THREE.Vector3) this.shadowTarget.copy(target);
+        else this.shadowTarget.set(target[0], target[1], target[2]);
+        this.frameShadow(reach);
+        // The sun keeps the time of day's direction from its new target.
+        this.applyDaytime(this.daytime);
+    }
+
+    private frameShadow(reach: number): void {
+        const camera = this.sun.shadow.camera;
+        camera.left = -reach;
+        camera.right = reach;
+        camera.top = reach;
+        camera.bottom = -reach;
+        camera.updateProjectionMatrix();
+    }
+
+    /**
+     * The `look` target and span that frame every one of `points` at the
+     * current aspect (or at `aspect`, for a part of the screen), leaving
+     * `margin` (a fraction of the frame) around them, with the target in the
+     * middle of the frame.
+     */
+    fitPoints(
+        points: readonly (readonly [number, number, number])[],
+        margin = 0.08,
+        aspect = this.width / this.height,
+    ): { target: THREE.Vector3; span: number } {
+        // The camera's own axes, without the title screen's sway.
+        const direction = new THREE.Vector3(
+            Math.sin(AZIMUTH) * Math.cos(ELEVATION),
+            Math.sin(ELEVATION),
+            Math.cos(AZIMUTH) * Math.cos(ELEVATION),
+        );
+        const right = new THREE.Vector3(Math.cos(AZIMUTH), 0, -Math.sin(AZIMUTH));
+        const up = new THREE.Vector3().crossVectors(direction, right);
+        const low = [Infinity, Infinity, Infinity];
+        const high = [-Infinity, -Infinity, -Infinity];
+        const point = new THREE.Vector3();
+        for (const [x, y, z] of points) {
+            point.set(x, y, z);
+            const across = [point.dot(right), point.dot(up), point.dot(direction)];
+            for (let i = 0; i < 3; i += 1) {
+                low[i] = Math.min(low[i] as number, across[i] as number);
+                high[i] = Math.max(high[i] as number, across[i] as number);
+            }
+        }
+        if (!Number.isFinite(low[0])) return { target: this.goal.target.clone(), span: this.goal.span };
+        const mid = (i: number): number => ((low[i] as number) + (high[i] as number)) / 2;
+        // Halfway through the points' depth too, so they all sit well inside the camera's near and far planes.
+        const target = new THREE.Vector3()
+            .addScaledVector(right, mid(0))
+            .addScaledVector(up, mid(1))
+            .addScaledVector(direction, mid(2));
+        const wide = (high[0] as number) - (low[0] as number);
+        const tall = (high[1] as number) - (low[1] as number);
+        return { target, span: Math.max(tall, wide / aspect) * (1 + margin * 2) };
     }
 
     /** A slow side-to-side drift, for the title screen. 0 turns it off. */
@@ -677,8 +769,8 @@ export class Stage {
             lastY = event.clientY;
             moved += Math.abs(dx) + Math.abs(dy);
             const unitsPerPixel = this.view.span / this.nudge.zoom / this.height;
-            this.nudge.x = clamp(this.nudge.x - dx * unitsPerPixel, -16, 16);
-            this.nudge.y = clamp(this.nudge.y + dy * unitsPerPixel, -12, 12);
+            this.nudge.x = clamp(this.nudge.x - dx * unitsPerPixel, -this.panLimit.x, this.panLimit.x);
+            this.nudge.y = clamp(this.nudge.y + dy * unitsPerPixel, -this.panLimit.y, this.panLimit.y);
         };
         const up = (event: PointerEvent): void => {
             if (!dragging || event.pointerId !== dragId) return;
@@ -686,6 +778,7 @@ export class Stage {
                 setPointer(event);
                 const hit = this.pick();
                 if (hit) this.onPick?.(hit);
+                else this.onMiss?.();
             }
             dragging = false;
         };
@@ -724,12 +817,23 @@ export class Stage {
         this.pickables.push({ object, id });
     }
 
+    /**
+     * Lets clicks and hovering find the pickables with this id, or pass
+     * through them. The raycaster ignores visibility, so a hidden place must
+     * be switched off here too.
+     */
+    setPickable(id: string, enabled: boolean): void {
+        if (enabled) this.unpickable.delete(id);
+        else this.unpickable.add(id);
+    }
+
     private pick(): PickHit | undefined {
         if (this.pickables.length === 0) return undefined;
         this.raycaster.setFromCamera(this.pointer, this.camera);
         let best: PickHit | undefined;
         let bestDistance = Infinity;
         for (const { object, id } of this.pickables) {
+            if (this.unpickable.has(id)) continue;
             const hits = this.raycaster.intersectObject(object, true);
             const first = hits[0];
             if (first && first.distance < bestDistance) {
@@ -773,6 +877,22 @@ export class Stage {
         return () => this.tracked.delete(entry);
     }
 
+    /**
+     * Calls `place` every frame, after the camera has moved, with where `position` lands on the stage
+     * in CSS pixels (undefined while it has none). For overlays that place themselves, such as a menu
+     * beside its building. Returns a function that stops it.
+     */
+    follow(
+        position: () => THREE.Vector3 | undefined,
+        place: (point: { x: number; y: number } | undefined) => void,
+    ): () => void {
+        const entry: Follower = { position, place };
+        this.followers.add(entry);
+        const at = position();
+        place(at ? this.project(at) : undefined);
+        return () => this.followers.delete(entry);
+    }
+
     private updateTracked(): void {
         for (const entry of this.tracked) {
             const position = entry.position();
@@ -789,6 +909,10 @@ export class Stage {
             }
             entry.element.style.visibility = 'visible';
             entry.element.style.transform = `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0)`;
+        }
+        for (const entry of this.followers) {
+            const position = entry.position();
+            entry.place(position ? this.project(position) : undefined);
         }
     }
 
@@ -839,8 +963,9 @@ export class Stage {
         const elevation = THREE.MathUtils.degToRad(lerp(a.elevation, b.elevation, t));
         this.sun.position
             .set(Math.sin(azimuth) * Math.cos(elevation), Math.sin(elevation), Math.cos(azimuth) * Math.cos(elevation))
-            .multiplyScalar(60);
-        this.sun.target.position.set(0, 0, 0);
+            .multiplyScalar(60)
+            .add(this.shadowTarget);
+        this.sun.target.position.copy(this.shadowTarget);
         this.sun.target.updateMatrixWorld();
 
         this.fill.color.copy(mix(a.sky, b.sky));

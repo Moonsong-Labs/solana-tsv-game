@@ -6,6 +6,7 @@
  * One list for the models, the walking routes and the camera, so they agree.
  */
 import type { V3 } from '../scene/kit.ts';
+import type { StockId } from '../sim/park.ts';
 
 export const ISLAND = 24;
 export const HALF = ISLAND / 2;
@@ -106,3 +107,108 @@ export const VIEWS = {
 } as const satisfies Record<string, { target: V3; span: number }>;
 
 export type ViewId = keyof typeof VIEWS;
+
+// ----- The market quarter: manager mode's second island -----
+
+/**
+ * The market quarter, a second floating island off the main island's front
+ * edge, holding the pools of the other three stocks. The main island is
+ * full, so the quarter hangs beyond the exit road, which crosses to it over
+ * a bridge. It sits in front of the town as the camera sees it, so only low
+ * things stand near its back edge.
+ */
+export const ANNEX = { x0: -25.2, x1: 4.8, z0: 14, z1: 23.5 } as const satisfies {
+    x0: number;
+    x1: number;
+    z0: number;
+    z1: number;
+};
+
+/** The bridge from the exit road's end to the quarter: flat, level with the paving, as wide as the road. */
+export const BRIDGE = { x0: EXIT_X - 0.95, x1: EXIT_X + 0.95, z0: HALF - 0.3, z1: ANNEX.z0 + 0.3 } as const;
+
+/** The quarter's front path runs along X at this Z, past every pool's jetty. */
+export const FRONT_Z = 22.4;
+
+/** The stocks whose pools stand in the market quarter, from the bridge outwards. */
+export const QUARTER_STOCKS = ['TSB', 'TSC', 'TSD'] as const satisfies readonly StockId[];
+
+/** Ground positions [x, z] of each stock's pond. TSA's is the main island's pool. */
+export const POOL_SITES: Record<StockId, readonly [number, number]> = {
+    TSA: SITES.pool,
+    TSB: [-2, 18.5],
+    TSC: [-10.5, 18.5],
+    TSD: [-19, 18.5],
+};
+
+/** Where a pool's jetty stands, from its pond's centre: the same corner for every pool. */
+const JETTY: readonly [number, number] = [-2.25, 1.3];
+
+/** Where a trader stands to settle at a stock's pool: its jetty. */
+export function poolRim(stock: StockId): V3 {
+    if (stock === 'TSA') return SPOTS.poolRim;
+    const [x, z] = POOL_SITES[stock];
+    return [x + JETTY[0], 0, z + JETTY[1]];
+}
+
+/** Off the quarter's front edge, where the quarter's road leaves it. */
+const QUARTER_EXIT: V3 = [EXIT_X, 0, ANNEX.z1 + 1.6];
+
+/**
+ * The walk from just past the gate (`SPOTS.pastGate`) to a pool's jetty.
+ * To the quarter: across the plaza to the exit road, down it and over the
+ * bridge to the front path, along it, and up the pool's own spur.
+ */
+export function routeToPool(stock: StockId): V3[] {
+    if (stock === 'TSA') return [SPOTS.poolRim];
+    const [x, , z] = poolRim(stock);
+    return [SPOTS.exitStart, [EXIT_X, 0, FRONT_Z], [x, 0, FRONT_Z], [x, 0, z]];
+}
+
+/**
+ * The walk from a pool's jetty to off the islands, where the walker is
+ * removed. With the quarter in place the exit road leads onto the bridge, so
+ * every pool's traders leave by the quarter's road, off its front edge.
+ */
+export function routeFromPool(stock: StockId): V3[] {
+    if (stock === 'TSA') return [SPOTS.exitStart, QUARTER_EXIT];
+    const [x] = poolRim(stock);
+    return [[x, 0, FRONT_Z], [EXIT_X, 0, FRONT_Z], QUARTER_EXIT];
+}
+
+/** A camera view framing one stock's pool, as `VIEWS.pool` frames TSA's. */
+export function poolView(stock: StockId): { target: V3; span: number } {
+    if (stock === 'TSA') return VIEWS.pool;
+    const [x, z] = POOL_SITES[stock];
+    const [px, pz] = SITES.pool;
+    const [tx, ty, tz] = VIEWS.pool.target;
+    return { target: [x + tx - px, ty, z + tz - pz], span: VIEWS.pool.span };
+}
+
+/**
+ * What a view of the whole park must hold: both islands' corners on the
+ * ground, raised to the height of the trees and roofs near the edges, and
+ * lowered to the foot of the slabs.
+ */
+export const PARK_POINTS: readonly V3[] = (
+    [
+        [-HALF, -HALF],
+        [HALF, -HALF],
+        [HALF, HALF],
+        [-HALF, HALF],
+        [ANNEX.x0, ANNEX.z0],
+        [ANNEX.x1, ANNEX.z0],
+        [ANNEX.x1, ANNEX.z1],
+        [ANNEX.x0, ANNEX.z1],
+    ] as const
+).flatMap(([x, z]): V3[] => [
+    [x, 3.5, z],
+    [x, -3.2, z],
+]);
+
+/**
+ * The sun's shadow frame for both islands: the point it aims at and the
+ * half-size of its square. Worked out over every sun direction of the day,
+ * so the corners and the treetops always fall inside it.
+ */
+export const MANAGER_SHADOW: { target: V3; reach: number } = { target: [-6.4, 0, 5.6], reach: 26.5 };

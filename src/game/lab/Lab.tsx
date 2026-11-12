@@ -5,6 +5,7 @@
  * look-dev and screenshots. Open it with `?lab=<name>[,<name>]`:
  *
  *   ?lab=exchange            the place, framed by its camera view
+ *   ?lab=market              the market quarter with its three pools open
  *   &at=x,y,z&span=n         a custom camera target and span instead
  *   &day=0..1                time of day (0 dawn, 0.4 noon, 0.8 dusk, 1 night)
  *   &island=0                hide the island and garden
@@ -16,9 +17,10 @@
 import { useEffect, useRef } from 'react';
 import type * as THREE from 'three';
 
+import type { V3 } from '../scene/kit.ts';
 import { Stage } from '../scene/stage.ts';
 import { Character, LOOKS } from '../world/character.ts';
-import { createIsland } from '../world/island.ts';
+import { type Island, createIsland } from '../world/island.ts';
 import { VIEWS, type ViewId } from '../world/layout.ts';
 import type { Place } from '../world/place.ts';
 
@@ -26,6 +28,8 @@ interface Loaded {
     places: Record<string, Place>;
     extra?: Record<string, { group: THREE.Object3D; update?(dt: number, time: number): void }>;
     view: ViewId;
+    /** Readies the stage (and the island, if shown) for places beyond the town, and frames them in place of `view`. */
+    frame?: (stage: Stage, island: Island | undefined) => { target: THREE.Vector3 | V3; span: number };
 }
 
 const LOADERS: Record<string, () => Promise<Loaded>> = {
@@ -55,6 +59,48 @@ const LOADERS: Record<string, () => Promise<Loaded>> = {
     chain: async () => ({ places: { chain: (await import('../world/chain.ts')).createChain() }, view: 'chain' }),
     gate: async () => ({ places: { gate: (await import('../world/gate.ts')).createGate() }, view: 'gate' }),
     pool: async () => ({ places: { pool: (await import('../world/pool.ts')).createPool() }, view: 'pool' }),
+    market: async () => {
+        const [{ createAnnex }, { createPool }, layout, { STOCKS }] = await Promise.all([
+            import('../world/annex.ts'),
+            import('../world/pool.ts'),
+            import('../world/layout.ts'),
+            import('../sim/park.ts'),
+        ]);
+        const places: Record<string, Place> = {};
+        for (const stock of ['TSB', 'TSC', 'TSD'] as const) {
+            const pool = createPool({ stock });
+            const { opening } = STOCKS[stock];
+            pool.setStage('open', true);
+            pool.setVaultFrozen(false, true);
+            pool.setVaults(100, 100 * opening, 100);
+            pool.setBoard(
+                `1 ${stock} = ${opening.toFixed(2)} USDC`,
+                `100 ${stock} · ${Math.round(100 * opening)} USDC`,
+                'open',
+            );
+            places[`pool:${stock}`] = pool;
+        }
+        const { x0, x1, z0, z1 } = layout.ANNEX;
+        return {
+            places,
+            extra: { annex: createAnnex() },
+            view: 'pool',
+            frame: (stage, island) => {
+                stage.setShadowFrame(layout.MANAGER_SHADOW.target, layout.MANAGER_SHADOW.reach);
+                island?.makeRoom(true);
+                stage.panLimit = { x: 30, y: 20 };
+                return stage.fitPoints(
+                    [
+                        [x0, 2, z0],
+                        [x1, 2, z0],
+                        [x1, -3, z1],
+                        [x0, -3, z1],
+                    ],
+                    0.06,
+                );
+            },
+        };
+    },
 };
 
 export function Lab({ names }: { names: string[] }) {
@@ -77,10 +123,12 @@ export function Lab({ names }: { names: string[] }) {
             if (cancelled) return;
             stage = new Stage(canvas, overlay);
             const activeStage = stage;
+            let island: Island | undefined;
             if (params.get('island') !== '0') {
-                const island = createIsland();
-                activeStage.scene.add(island.group);
-                activeStage.onUpdate((dt, time) => island.update(dt, time));
+                const shown = createIsland();
+                activeStage.scene.add(shown.group);
+                activeStage.onUpdate((dt, time) => shown.update(dt, time));
+                island = shown;
             }
             const places: Record<string, Place> = {};
             const extra: Record<string, unknown> = {};
@@ -112,9 +160,12 @@ export function Lab({ names }: { names: string[] }) {
             const first = loaded[0];
             const viewId =
                 (params.get('view') as ViewId | null) ?? (names.includes('all') ? 'town' : (first?.view ?? 'town'));
-            const view = VIEWS[viewId] ?? VIEWS.town;
+            const framed = params.get('view') ? undefined : first?.frame?.(activeStage, island);
+            const view = framed ?? VIEWS[viewId] ?? VIEWS.town;
             const at = params.get('at')?.split(',').map(Number);
-            const span = Number(params.get('span')) || (viewId === 'town' ? activeStage.spanToFit(24) : view.span);
+            const span =
+                Number(params.get('span')) ||
+                (viewId === 'town' && !framed ? activeStage.spanToFit(24) : view.span);
             activeStage.look(
                 {
                     target: at && at.length === 3 ? [at[0] as number, at[1] as number, at[2] as number] : view.target,

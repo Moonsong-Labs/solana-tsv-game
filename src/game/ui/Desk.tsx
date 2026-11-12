@@ -107,7 +107,7 @@ function Portrait({ who }: { who: keyof typeof CAST }) {
     return <div ref={ref} className="gk-portrait__stage" />;
 }
 
-function Row({ label, children, ring }: { label: string; children: ReactNode; ring?: boolean }) {
+export function Row({ label, children, ring }: { label: string; children: ReactNode; ring?: boolean }) {
     return (
         <div className={ring ? 'gk-row gk-row--ring' : 'gk-row'}>
             <span className="gk-row__label">{label}</span>
@@ -221,7 +221,7 @@ function until(expiresAt: number, now: number): string {
     return Math.floor(expiresAt / DAY) === Math.floor(now / DAY) ? `today, ${clock(expiresAt)}` : date(expiresAt);
 }
 
-function CredentialCard({
+export function CredentialCard({
     wallet,
     now,
     role,
@@ -536,7 +536,7 @@ function Reasons({
     );
 }
 
-const LAMP_TEXT: Record<LampState, string> = {
+export const LAMP_TEXT: Record<LampState, string> = {
     idle: '',
     run: 'checking…',
     pass: 'passed',

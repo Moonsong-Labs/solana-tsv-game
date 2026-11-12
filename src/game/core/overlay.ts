@@ -54,6 +54,8 @@ export class Overlay {
     private lastReal = performance.now();
     private shownTags: 'all' | 'none' | readonly string[] = 'none';
     private hovered: string | undefined;
+    /** The place whose menu is open: its menu stands where its tag would. */
+    private selected: string | undefined;
 
     constructor(
         private readonly stage: Stage,
@@ -197,6 +199,12 @@ export class Overlay {
         this.refreshTags();
     }
 
+    /** Hides the tag of the place whose menu is open (undefined shows it again). */
+    selectTag(id: string | undefined): void {
+        this.selected = id;
+        this.refreshTags();
+    }
+
     /** The place under the pointer, whose tag shows while it is hovered. */
     hoverTag(id: string | undefined): void {
         this.hovered = id;
@@ -206,7 +214,9 @@ export class Overlay {
     private refreshTags(): void {
         const which = this.shownTags;
         for (const [id, tag] of this.tags) {
-            const visible = id === this.hovered || which === 'all' || (which !== 'none' && which.includes(id));
+            const visible =
+                id !== this.selected &&
+                (id === this.hovered || which === 'all' || (which !== 'none' && which.includes(id)));
             tag.element.classList.toggle('gk-pin--shown', visible);
             tag.element.classList.toggle('gk-pin--hover', id === this.hovered);
         }

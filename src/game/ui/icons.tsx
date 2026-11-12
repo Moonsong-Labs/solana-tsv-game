@@ -120,4 +120,117 @@ export const Icon = {
             <path d="M12 3l7 3v5.500c0 4.300-3 7.500-7 9-4-1.500-7-4.700-7-9V6z" />
         </Svg>
     ),
+    /** Manager mode's mark: the keys to the venue. */
+    key: (size?: number) => (
+        <Svg size={size}>
+            <circle cx="8" cy="15" r="4.5" />
+            <path d="M11.300 11.700L20 3M16.500 6.500l2.500 2.500M14 9l2 2" />
+        </Svg>
+    ),
+    target: (size?: number) => (
+        <Svg size={size}>
+            <circle cx="12" cy="12" r="8.5" />
+            <circle cx="12" cy="12" r="4.5" />
+            <circle cx="12" cy="12" r="0.8" fill="currentColor" />
+        </Svg>
+    ),
+    chevron: (size?: number) => (
+        <Svg size={size}>
+            <path d="M6 9l6 6 6-6" />
+        </Svg>
+    ),
+    send: (size?: number) => (
+        <Svg size={size}>
+            <path d="M4 12l16-8-6 16-3-7z" />
+            <path d="M11 13l9-9" />
+        </Svg>
+    ),
+    restart: (size?: number) => (
+        <Svg size={size}>
+            <path d="M4.500 12a7.500 7.500 0 1 0 2.200-5.300" />
+            <path d="M4 4v4.500h4.500" />
+        </Svg>
+    ),
+    grid: (size?: number) => (
+        <Svg size={size}>
+            <path d="M4 4h6.500v6.500H4zM13.500 4H20v6.500h-6.500zM4 13.500h6.500V20H4zM13.500 13.500H20V20h-6.500z" />
+        </Svg>
+    ),
+    circle: (size?: number) => (
+        <Svg size={size}>
+            <circle cx="12" cy="12" r="7.500" />
+        </Svg>
+    ),
+    flag: (size?: number) => (
+        <Svg size={size}>
+            <path d="M5 21V4M5 4h11l-2 4 2 4H5" />
+        </Svg>
+    ),
+    back: (size?: number) => (
+        <Svg size={size}>
+            <path d="M19 12H5M11 6l-6 6 6 6" />
+        </Svg>
+    ),
+    plus: (size?: number) => (
+        <Svg size={size}>
+            <path d="M12 5v14M5 12h14" />
+        </Svg>
+    ),
+    /** Coins in a stack: funding. */
+    coins: (size?: number) => (
+        <Svg size={size}>
+            <ellipse cx="12" cy="6.5" rx="7" ry="2.8" />
+            <path d="M5 6.5v5c0 1.500 3.100 2.800 7 2.800s7-1.300 7-2.800v-5" />
+            <path d="M5 11.500v5c0 1.500 3.100 2.800 7 2.800s7-1.300 7-2.800v-5" />
+        </Svg>
+    ),
+    /** A balance: the books against the vault. */
+    scale: (size?: number) => (
+        <Svg size={size}>
+            <path d="M12 4v16M7 20h10M5 7h14" />
+            <path d="M5 7l-2.500 6a2.500 2.500 0 0 0 5 0zM19 7l-2.500 6a2.500 2.500 0 0 0 5 0z" />
+        </Svg>
+    ),
+    /** A rolled paper: the trade policy. */
+    scroll: (size?: number) => (
+        <Svg size={size}>
+            <path d="M8 4h10a2 2 0 0 1 2 2v1h-4" />
+            <path d="M16 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-1h10" />
+            <path d="M8 4a2 2 0 0 0-2 2v11M10 9h4M10 13h4" />
+        </Svg>
+    ),
+    /** A person: an owner, a broker. */
+    user: (size?: number) => (
+        <Svg size={size}>
+            <circle cx="12" cy="8" r="3.800" />
+            <path d="M4.500 20c.8-3.800 3.700-6 7.500-6s6.700 2.200 7.500 6" />
+        </Svg>
+    ),
+    /** A raised hand: a hold. */
+    hand: (size?: number) => (
+        <Svg size={size}>
+            <path d="M8 12V5.500a1.500 1.500 0 0 1 3 0V11M11 10.500V4a1.500 1.500 0 0 1 3 0v7M14 10.500V5.500a1.500 1.500 0 0 1 3 0V14" />
+            <path d="M8 11.500l-1.400-1.800a1.600 1.600 0 0 0-2.600 1.800l3 5.200A6 6 0 0 0 12.200 20H13a4 4 0 0 0 4-4v-3" />
+        </Svg>
+    ),
+    unlock: (size?: number) => (
+        <Svg size={size}>
+            <rect x="4.500" y="10.500" width="15" height="10" rx="2" />
+            <path d="M8 10.500V7a4 4 0 0 1 7.700-1.500" />
+        </Svg>
+    ),
+    undo: (size?: number) => (
+        <Svg size={size}>
+            <path d="M9 14L4 9l5-5" />
+            <path d="M4 9h10a6 6 0 0 1 0 12h-3" />
+        </Svg>
+    ),
+    /** A mast that sends: the halt poster. */
+    antenna: (size?: number) => (
+        <Svg size={size}>
+            <path d="M12 11v10M9 21h6" />
+            <circle cx="12" cy="9" r="1.800" />
+            <path d="M8.200 5.200a5.400 5.400 0 0 0 0 7.600M15.800 5.200a5.400 5.400 0 0 1 0 7.600" />
+        </Svg>
+    ),
 };

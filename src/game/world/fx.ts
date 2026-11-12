@@ -6,10 +6,17 @@
 import * as THREE from 'three';
 
 import { PALETTE, Sculpt, type Hex, clamp, ease } from '../scene/kit.ts';
+import type { StockId } from '../sim/park.ts';
+import { stockTones } from './tones.ts';
+
+/** The stocks other than TSA, whose shares fly in their own colours (see `stockToken`). */
+type OtherStock = Exclude<StockId, 'TSA'>;
 
 export type TokenKind =
     | 'stock'
     | 'frozenStock'
+    | `stock:${OtherStock}`
+    | `frozenStock:${OtherStock}`
     | 'usdc'
     | 'lp'
     | 'credential'
@@ -32,16 +39,37 @@ function parcel(s: Sculpt, color: Hex): void {
     s.box(0.06, 0.21, 0.25, { color: PALETTE.paper, at: [0, -0.003, 0], r: 0.01 });
 }
 
+/** The token for shares of `stock`, cased in ice while its accounts are frozen. TSA's are the day's 'stock'. */
+export function stockToken(stock: StockId, frozen = false): TokenKind {
+    if (stock === 'TSA') return frozen ? 'frozenStock' : 'stock';
+    return frozen ? `frozenStock:${stock}` : `stock:${stock}`;
+}
+
+/** A share: a cube in its stock's colour with a pale band. */
+function share(s: Sculpt, stock: StockId, frozen: boolean): void {
+    const tones = stockTones(stock);
+    s.box(0.26, 0.26, 0.26, { color: tones.deep, at: [0, -0.13, 0], r: 0.06, layer: 'gloss' });
+    s.box(0.27, 0.07, 0.27, { color: tones.pale, at: [0, -0.035, 0], r: 0.02, layer: 'gloss' });
+    if (frozen) s.box(0.36, 0.36, 0.36, { color: PALETTE.ice, at: [0, -0.18, 0], r: 0.07, layer: 'glass' });
+}
+
 function sculptToken(kind: TokenKind): THREE.Group {
     const s = new Sculpt();
     switch (kind) {
         case 'stock':
         case 'frozenStock':
-            s.box(0.26, 0.26, 0.26, { color: PALETTE.stock, at: [0, -0.13, 0], r: 0.06, layer: 'gloss' });
-            s.box(0.27, 0.07, 0.27, { color: '#ffe3ea', at: [0, -0.035, 0], r: 0.02, layer: 'gloss' });
-            if (kind === 'frozenStock')
-                s.box(0.36, 0.36, 0.36, { color: PALETTE.ice, at: [0, -0.18, 0], r: 0.07, layer: 'glass' });
+            share(s, 'TSA', kind === 'frozenStock');
             break;
+        case 'stock:TSB':
+        case 'stock:TSC':
+        case 'stock:TSD':
+        case 'frozenStock:TSB':
+        case 'frozenStock:TSC':
+        case 'frozenStock:TSD': {
+            const [what, stock] = kind.split(':') as [string, OtherStock];
+            share(s, stock, what === 'frozenStock');
+            break;
+        }
         case 'usdc':
             s.cyl(0.17, 0.17, 0.07, {
                 color: PALETTE.usdc,
@@ -218,6 +246,8 @@ export class Fx {
     private petalTimer = 0;
     private fireflies = 0;
     private fireflyTimer = 0;
+    /** Where fireflies wander: patches of ground as [x0, z0, x1, z1]. The main island's lawn by default. */
+    private fireflyGrounds: (readonly [number, number, number, number])[] = [[-11, -11, 11, 11]];
     private readonly color = new THREE.Color();
 
     constructor(scene: THREE.Scene) {
@@ -276,6 +306,25 @@ export class Fx {
     /** How many fireflies wander at night; 0 by day. */
     setFireflies(amount: number): void {
         this.fireflies = amount;
+    }
+
+    /** The patches of ground fireflies wander over, as [x0, z0, x1, z1]; each gets its share by area. */
+    setFireflyGrounds(grounds: readonly (readonly [number, number, number, number])[]): void {
+        this.fireflyGrounds = [...grounds];
+    }
+
+    /** One of the firefly grounds, picked in proportion to its area. */
+    private fireflyGround(): readonly [number, number, number, number] {
+        const grounds = this.fireflyGrounds;
+        const first = grounds[0] as readonly [number, number, number, number];
+        if (grounds.length === 1) return first;
+        const area = ([x0, z0, x1, z1]: readonly [number, number, number, number]): number => (x1 - x0) * (z1 - z0);
+        let roll = Math.random() * grounds.reduce((sum, ground) => sum + area(ground), 0);
+        for (const ground of grounds) {
+            roll -= area(ground);
+            if (roll <= 0) return ground;
+        }
+        return first;
     }
 
     // ----- Flying tokens -----
@@ -578,8 +627,9 @@ export class Fx {
             if (this.fireflyTimer <= 0) {
                 this.fireflyTimer = 0.5 / this.fireflies;
                 const p = this.spawn();
-                p.x = (Math.random() - 0.5) * 22;
-                p.z = (Math.random() - 0.5) * 22;
+                const [x0, z0, x1, z1] = this.fireflyGround();
+                p.x = x0 + Math.random() * (x1 - x0);
+                p.z = z0 + Math.random() * (z1 - z0);
                 p.y = 0.4 + Math.random() * 1.6;
                 p.vx = (Math.random() - 0.5) * 0.4;
                 p.vz = (Math.random() - 0.5) * 0.4;

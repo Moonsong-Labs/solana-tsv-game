@@ -5,6 +5,7 @@
  * the interface over it.
  */
 import './game.css';
+import './manager.css';
 
 import { useEffect, useRef, useState } from 'react';
 
@@ -12,10 +13,13 @@ import { createAudio } from '../audio/audio.ts';
 import { Game } from '../core/game.ts';
 import { disposePortraitStudio } from '../scene/portrait.ts';
 import { Stage, type Quality } from '../scene/stage.ts';
+import { scenarioDef } from '../sim/scenarios.ts';
 import { GameContext } from './context.tsx';
 import { Desk } from './Desk.tsx';
 import { ChapterCard, Feed, Narration, PlaceCard, TopBar } from './Hud.tsx';
 import { controlOwnsKey, watchPointerFocus } from './keys.ts';
+import { ScenarioPicker } from './manager/Cards.tsx';
+import { ManagerLayer } from './manager/Layer.tsx';
 import { Summary, Title } from './Screens.tsx';
 
 export function GameShell() {
@@ -63,10 +67,14 @@ export function GameShell() {
             stage.start();
             setGame(created);
             (window as unknown as { __gk: unknown }).__gk = { game: created, stage, world: created.world, ready: true };
-            // A link can start the day directly: at a chapter, or on autoplay for a projector.
+            // A link can start the day directly: at a chapter, or on autoplay for a projector. Or a
+            // scenario of manager mode: ?manager=<scenario id>.
             const chapter = params.get('chapter') ?? undefined;
             const autoplay = params.get('autoplay') === '1';
-            if (chapter || autoplay || params.get('start') === '1') {
+            const scenario = scenarioDef(params.get('manager') ?? '');
+            if (scenario) {
+                created.beginManager(scenario.id);
+            } else if (chapter || autoplay || params.get('start') === '1') {
                 created.begin({ chapter, tour: params.get('tour') === '1', autoplay, fromLink: true });
             }
         })();
@@ -85,6 +93,8 @@ export function GameShell() {
         const onKey = (event: KeyboardEvent): void => {
             if (event.repeat || event.metaKey || event.ctrlKey || event.altKey) return;
             const key = event.key.toLowerCase();
+            // Letters typed into a field (a select picking a name, say) are the field's, not shortcuts.
+            if ((event.target as Element | null)?.closest('input, select, textarea')) return;
             if (key === ' ' || key === 'enter') {
                 // A button the player tabbed to gets the key. One that only kept the focus from a
                 // click does not: Space and Enter stay the game's keys, so a speed or mute button
@@ -93,8 +103,10 @@ export function GameShell() {
                 // While the game waits to move on, Space and Enter do that. While the gate is
                 // checking, they hurry it.
                 if (game.advance()) event.preventDefault();
-            } else if (key === 'p') game.patchSettings({ autoplay: !game.settings.autoplay });
-            else if (key === 'm') game.patchSettings({ muted: !game.settings.muted });
+            } else if (key === 'p') {
+                // Running the venue has no autoplay.
+                if (game.store.get().mode !== 'manager') game.patchSettings({ autoplay: !game.settings.autoplay });
+            } else if (key === 'm') game.patchSettings({ muted: !game.settings.muted });
         };
         // Browsers start sound only after a click or a key press: take the first one, wherever it lands.
         const unlock = (): void => {
@@ -145,6 +157,8 @@ export function GameShell() {
                     <PlaceCard />
                     <Feed />
                     <Summary />
+                    <ManagerLayer />
+                    <ScenarioPicker />
                 </GameContext.Provider>
             )}
         </div>

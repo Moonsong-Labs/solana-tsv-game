@@ -127,7 +127,7 @@ export const PLACES: Record<PlaceId, PlaceInfo> = {
             'Halted: refused with 7004.',
             'Evidence too old: the record cannot be trusted, refused with 7007.',
         ],
-        real: 'The halt poster service and the symbol record account of the halts design.',
+        real: 'The symbol record account of the halts design (in review), kept fresh by a halt poster service that is planned.',
         availability: 'review',
         standing: 'In review · PR #101',
     },

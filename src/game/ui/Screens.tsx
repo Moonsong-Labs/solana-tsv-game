@@ -9,6 +9,7 @@ import type { Availability } from '../sim/types.ts';
 import { useGame, useGameState } from './context.tsx';
 import { Tag } from './Hud.tsx';
 import { Icon } from './icons.tsx';
+import { MISSIONS, openPicker } from './manager/picker.ts';
 
 export function Title() {
     const game = useGame();
@@ -61,6 +62,18 @@ export function Title() {
                         ))}
                     </div>
                 </div>
+                {/* The second way in: the player runs the whole venue instead of standing at its gate. */}
+                <button type="button" className="gk-title__venue" onClick={openPicker} data-start="manager">
+                    <span className="gk-title__venuemark">{Icon.key(22)}</span>
+                    <span className="gk-title__venuetext">
+                        <b>Run the venue</b>
+                        <span>
+                            {MISSIONS.length} missions and free play: hold every key, from the KYC bureau to the
+                            council.
+                        </span>
+                    </span>
+                    <i>{Icon.arrow(18)}</i>
+                </button>
                 <div className="gk-title__legend">
                     <Tag availability="live" />
                     <Tag availability="review" />
