@@ -7,6 +7,7 @@
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
+import { CODE_SEAL } from '../content/seal.ts';
 import type { GameState, InspectState, Paper, VerdictState } from '../core/state.ts';
 import { portraitStudio } from '../scene/portrait.ts';
 import { CASE_COUNT, CAST } from '../sim/campaign.ts';
@@ -482,8 +483,34 @@ function Rulebook({ state }: { state: GameState }) {
                     </p>
                 </div>
             )}
-            <p className="gk-rules__order">The first check that fails decides.</p>
+            <div className="gk-rules__foot">
+                <p className="gk-rules__order">The first check that fails decides.</p>
+                <CodeSeal />
+            </div>
         </div>
+    );
+}
+
+/**
+ * The rulebook's seal: a wax stamp with the first and last digits of the pool
+ * program's hash. The rulebook is the published source and the gate is the
+ * deployed program; the seal is what lets anyone tell that they are the same.
+ */
+function CodeSeal() {
+    const { program, hash, commit, standing } = CODE_SEAL;
+    return (
+        <span
+            className="gk-codeseal"
+            title={`The hash of the pool program's code (${program}), built from solana-tsv ${commit}: ${hash}. Rebuild the published source and hash the program on chain: the same hash means the deployed code is the published code. The venue's own check: ${standing}.`}
+        >
+            <i className="gk-codeseal__wax">{Icon.check(10)}</i>
+            <span className="gk-codeseal__text">
+                <span className="gk-codeseal__label">Code seal</span>
+                <span className="gk-mono">
+                    {hash.slice(0, 4)}…{hash.slice(-4)}
+                </span>
+            </span>
+        </span>
     );
 }
 
