@@ -44,6 +44,15 @@ it.
 Nineteen visitors come through the gate. The first failing check decides the
 code, as in the pool.
 
+The rulebook carries a **code seal** at its foot: a wax stamp with the first
+and last digits of the hash of the pool program's code. The rulebook is the
+published source and the gate is the deployed program. Whoever rebuilds the
+source and hashes the program on chain gets the same hash when the two are
+the same code, so the deployed code can be proven to be the published code.
+Pointing at the seal shows the whole hash and the commit it was built from.
+The venue's own comparison is in review,
+[solana-tsv#138](https://github.com/Moonsong-Labs/solana-tsv/pull/138).
+
 ## Running the venue
 
 In manager mode the player no longer judges trades: the pool does, with the
@@ -149,7 +158,8 @@ the venue changes there (a pull request merges, a check or a code is added),
 update `src/game/sim/rules.ts`, the standing tags in `src/game/sim/` (the
 day's chapters and scenes, manager actions in `actions.ts` and scenarios in
 `scenarios.ts`) and `src/game/content/places.ts`, the tables above, and the
-tests.
+tests. When the pool program changes, update the code seal's hash and commit
+in `src/game/content/seal.ts` together.
 
 ## What is simplified
 
@@ -171,6 +181,9 @@ tests.
   and refusals).
 - On main the wallet that creates the pool is the only one that can fund it,
   so Yuki does both; pool creation by a venue role is planned.
+- The code seal is printed, not checked: it is the hash `solana-verify` gives
+  `cpmm-pool` built from solana-tsv `805e6ab`, and the game reads no chain to
+  compare it with.
 
 In manager mode:
 
